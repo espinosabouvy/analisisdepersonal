@@ -1,0 +1,1 @@
+"0","tabla.antiguedad <- generales%>%group_by(anio.ingreso, meses.antiguedad)%>%summarise(""Cuenta"" = n())"

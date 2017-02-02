@@ -1,0 +1,9 @@
+{
+    "path" : "~/DataScience/Proyectos/DelPersonal",
+    "sortOrder" : [
+        {
+            "ascending" : true,
+            "columnIndex" : 2
+        }
+    ]
+}

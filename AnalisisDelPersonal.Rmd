@@ -1,0 +1,426 @@
+---
+title: "Analisis del personal"
+author: "Luis Espinosa Bouvy"
+date: "12 de enero de 2017"
+output: html_document
+---
+
+```{r leer, include=FALSE, echo=FALSE}
+require(dplyr)
+require(ggplot2)
+require(tidyr)
+require(lubridate)
+require(plotly)
+require(gridExtra)
+     
+#DB HISTORIAL#
+#--------------------------------------------
+
+    classes.hist <- c(NUM = "factor", DSDNUM = "factor", NOMBRE = "character", 
+                       FECHA = "Date", FMOVIM = "Date", ADSDNUM = "factor", 
+                       ADEPTO = "factor", OBSERVA = "character", DOBSER = "character")
+     historial <- read.csv("historial-clean.csv", colClasses = classes.hist)
+     historial <- historial%>%select(-MOV.TIPO)
+     
+     #renombrar movimientos A-alta, B-baja, C-cambio, R-reingreso
+     mov.tipo <- data.frame("MVTO" = c("A","B","C","R"), 
+                            "MOV.TIPO" = c("ALTA","BAJA","CAMBIO","ALTA-REINGRESO"))
+     historial <- merge(historial, mov.tipo, by = "MVTO")
+     
+     #anio y mes de entrada
+     historial$ANIO.INGRESO <- year(historial$FECHA)
+     historial$MES.INGRESO <- month(historial$FECHA)
+     
+     #meses completos
+     historial <- historial[historial$FECHA < "2016-10-01",]
+     
+
+```
+
+
+```{r tabla_general, echo=FALSE, include=FALSE}
+require(lubridate)
+
+
+#DB GENERALES#
+#--------------------------------------------
+
+ classes.gral <- c(NUM = "factor", edo.civil.fit = "factor", ingreso = "Date")
+     generales <- read.csv("OperDataclean.csv", colClasses = classes.gral)
+     
+     #quien se queda un mes, tres y seis meses
+     generales$unmes<- ifelse(generales$meses.antiguedad>=1, 1,0)
+     generales$tresmeses <- ifelse(generales$meses.antiguedad>=3, 1,0)
+     generales$seismeses <- ifelse(generales$meses.antiguedad>=6, 1, 0)
+     #redondea sueldos a cerrados
+     generales$sueldo <- ceiling(generales$sueldo/100)*100
+     
+     #año ingreso
+     generales$anio.ingreso <- year(generales$ingreso) 
+     
+     #span para gráfica loess- mujeres
+          mspan = 0.8
+          hspan = 0.5
+```
+
+##Altas y bajas
+```{r, altas-bajas-porano, echo=FALSE, fig.height=6, fig.width=10}
+
+     por.year <- historial%>%
+     filter(ANIO.INGRESO >= 2013 & MOV.TIPO != "CAMBIO")%>%
+     group_by(ANIO.INGRESO, MOV.TIPO)%>%
+     summarise("CUENTA" = n())
+
+     g <- ggplot(data = por.year, aes(ANIO.INGRESO, CUENTA, colour = MOV.TIPO)) + 
+          geom_point() + geom_line()+ 
+          xlab("Anio") + 
+          ylab("Total personas") +
+          ggtitle("MOVIMIENTOS POR AÑO")
+     
+     ggplotly()
+
+```
+
+```{r, altas-bajas-poranomes, echo=FALSE, fig.height=6, fig.width=10}     
+     
+por.year.mes <- historial%>%
+     filter(ANIO.INGRESO %in% c("2013","2014","2015","2016") & MOV.TIPO != "CAMBIO")%>%
+     group_by(ANIO.INGRESO, MES.INGRESO,  MOV.TIPO)%>%
+     summarise("CUENTA" = n())
+
+     g <- ggplot(data = por.year.mes, aes(MES.INGRESO, CUENTA, colour = MOV.TIPO)) + 
+          geom_line() + 
+          facet_wrap(~ANIO.INGRESO) + 
+          xlab("Año") + 
+          ylab("Total personas") +
+          ggtitle("MOVIMIENTOS POR MES / AÑO") + 
+          scale_x_continuous(breaks = c(1:12))
+     
+     ggplotly()
+     
+```
+
+###Meses de antiguedad generados en la fábrica de altas en 2016
+```{r histograma-antiguedad-2016, echo=FALSE, fig.height=6, fig.width=10}
+
+    tabla <- generales%>%filter(anio.ingreso==2016)%>%
+          mutate (total = n())%>%
+          group_by(meses.antiguedad, total)%>%
+          summarise ("Cuenta"=n()) %>%
+     mutate (Frec.relativa = round(Cuenta / total,2))%>%
+     select("Meses" = meses.antiguedad, Cuenta, Frec.relativa)
+
+
+     ggplot(data = generales%>%filter(anio.ingreso == 2016), aes(meses.antiguedad, fill = sexo)) + 
+     geom_histogram(bins = 10) + 
+     xlab("Antiguedad en meses") + 
+     ylab("Cuenta") + 
+     ggtitle("Frecuencia de antiguedad - altas de personal 2016") + 
+     scale_x_continuous(breaks = c(0:12)) 
+
+```
+
+```{r tabla.antiguedad, echo = F, comment="", fig.height=6, fig.width=10}
+
+    tabla <- generales%>%filter(anio.ingreso==2016)%>%
+          mutate (total = n())%>%
+          group_by(meses.antiguedad, total)%>%
+          summarise ("Cuenta"=n()) %>%
+     mutate (Frec.relativa = round(Cuenta / total,2))%>%
+     select("Meses" = meses.antiguedad, Cuenta, Frec.relativa)
+
+     ggplot(data = tabla, aes(Meses, cumsum(Frec.relativa))) + geom_line() + 
+          geom_point(aes(Meses, Frec.relativa), size = 2, col = "green") + 
+          xlab("Meses antiguedad") + 
+          ylab("Porcentaje del personal que se dio de alta") + 
+          ggtitle("Antiguedad vs % del personal que se dio de alta en 2016") + 
+          scale_x_continuous(breaks = c(0:11)) + 
+          geom_label(aes(label = cumsum(Frec.relativa)))
+
+```
+
+##SUELDOS
+###MUJERES - Sueldos vs probabilidad de quedarse
+```{r, sueldo-femenino, echo=FALSE, fig.height=6, fig.width=10}
+     for.fit.women <- generales%>%
+          filter(anio.ingreso >= 2014, sexo == "femenino", 
+                 sueldo.min.fit >= 700, sueldo.min.fit < 1400)
+
+     pl2 <- ggplot(data = for.fit.women, 
+            aes(x = sueldo.min.fit, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 xlab("Sueldo semanal INICIAL") +
+                 ylab("Probabilidad") + 
+                 ggtitle("MUJERES - TRES MESES")
+     
+     pl1 <- ggplot(data = for.fit.women, 
+       aes(x = sueldo.min.fit, y= unmes, colour = factor(anio.ingreso))) +
+            geom_count(alpha = 0.5) + 
+            facet_wrap(~sexo, scales = "free", ncol = 1) +
+            geom_smooth(method = "lm", se = FALSE, lwd=0.5) +
+            xlab("Sueldo semanal INICIAL") +
+            ylab("Probabilidad") + 
+            ggtitle("MUJERES - UN MES")
+
+     grid.arrange(pl1, pl2, ncol=2)
+     
+
+
+     
+```
+
+###Detalles TRES MESES
+```{r detalles-fem-tresmes,  echo=FALSE, fig.height=6, fig.width=10}
+
+     pl2b <- ggplot(data = for.fit.women, 
+            aes(x = sueldo.min.fit, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 geom_smooth(method = "loess", span = mspan, se = FALSE, lwd=0.5, show.legend = T) +
+                 xlab("Sueldo semanal INICIAL") +
+                 ylab("Probabilidad") + 
+                 ggtitle("MUJERES - Sueldo vs probabilidad de durar 3 meses")
+
+     suppressWarnings(ggplotly())
+```
+
+###HOMBRES - Sueldos vs probabilidad de quedarse
+```{r, sueldo-masculino, echo=FALSE, fig.height=6, fig.width=10}
+     for.fit.men <- generales%>%
+          filter(anio.ingreso >= 2014, sexo == "masculino", 
+                 sueldo.min.fit >= 700, sueldo.min.fit < 2100)
+     pl5 <- ggplot(data = for.fit.men, 
+            aes(x = sueldo.min.fit, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 xlab("Sueldo semanal") +
+                 ylab("Probabilidad") + 
+                 ggtitle("HOMBRES - TRES MESES")
+     
+     pl4 <- ggplot(data = for.fit.men, 
+            aes(x = sueldo.min.fit, y= unmes, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 xlab("Sueldo semanal") +
+                 ylab("Probabilidad") + 
+                 ggtitle("HOMBRES - UN MES")
+     
+
+
+     
+     grid.arrange(pl4, pl5, ncol=2)
+     
+```
+
+###Detalles TRES MESES
+```{r detalles-masc-tresmes,  echo=FALSE, fig.height=6, fig.width=10}
+     pl5b <- ggplot(data = for.fit.men, 
+            aes(x = sueldo.min.fit, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) +
+                 geom_smooth(method = "loess", span = hspan, se = FALSE, lwd=0.5) +
+                 xlab("Sueldo semanal") +
+                 ylab("Probabilidad") + 
+                 ggtitle("HOMBRES - TRES MESES")
+
+     suppressWarnings(ggplotly())
+```
+
+##Probabilidad de quedarse cuando se aumenta de sueldo
+```{r prob-dias-aumento,  echo=FALSE, fig.height=6, fig.width=10}
+     
+     for.fit.dias.aumento <- generales%>%
+          filter(anio.ingreso >= 2014, 
+                 sueldo >= 700)%>%
+          mutate("aumento.bool" = ifelse(dias.para.aumento>0 & dias.para.aumento <=30,1,0))
+
+     pbaum1 <- ggplot(data = for.fit.dias.aumento, 
+            aes(x = aumento.bool, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 2) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) +
+                 xlab("Días para aumentar su sueldo") +
+                 ylab("Probabilidad") + 
+                 ggtitle("Cuando se aumenta su sueldo antes de 1 meses")+
+               scale_x_continuous(breaks = c(0,1), labels = c("No aumento","Con aumento"))
+     
+     suppressWarnings(ggplotly())
+     
+     for.fit.dias.aumento <- generales%>%
+     filter(anio.ingreso >= 2014, 
+            sueldo >= 700)%>%
+     mutate("aumento.bool" = ifelse(dias.para.aumento>0 & dias.para.aumento <=90,1,0))
+     
+     pbaum2 <- ggplot(data = for.fit.dias.aumento, 
+            aes(x = aumento.bool, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 2) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) +
+                 xlab("Días para aumentar su sueldo") +
+                 ylab("Probabilidad") + 
+                 ggtitle("Cuando se aumenta su sueldo antes de 3 meses")+
+               scale_x_continuous(breaks = c(0,1), labels = c("No aumento","Con aumento"))
+     suppressWarnings(ggplotly())
+
+```
+
+###Top 5% puestos con más altas en 2015-2016
+```{r, altas-puesto, echo=FALSE, fig.height=6, fig.width=10}
+     
+     top.ten.puesto <- generales%>%
+          filter(anio.ingreso >= 2015)%>%
+     group_by(puesto.fit)%>%
+     summarise("altas" = n())%>%
+     arrange(desc(altas))%>%
+     filter(altas >= quantile(altas, probs = 0.95))
+
+     g<- ggplot(data = generales%>%filter(anio.ingreso >=2015, puesto.fit %in% top.ten.puesto$puesto.fit), 
+                aes(puesto.fit, fill = sexo)) + geom_bar()+
+          facet_wrap(~anio.ingreso, ncol = 1)+
+          xlab("Puesto") + 
+          ylab("Cantidad de altas") + 
+          ggtitle("Top 5% altas por puesto 2016")
+     
+     ggplotly()
+     
+```
+
+###Probabilidad quedarse UN meses para top 5% de puestos en 2013-2016 y 2016
+```{r, sueldo-puestos, echo=FALSE, fig.height=6, fig.width=10}
+     
+     #historico
+     top.ten.gral <- generales%>%filter(anio.ingreso >=2014, anio.ingreso <=2015, 
+                                        puesto.fit %in% top.ten.puesto$puesto.fit,
+                                        sueldo>=700, sueldo < 1700)
+
+          pl5 <- ggplot(data = top.ten.gral, 
+            aes(x = sueldo, y= unmes, colour = sexo)) +
+                 geom_count(alpha = 0.5) + 
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 geom_smooth(method = "loess", span = 0.8, se = FALSE, lwd=0.5) +
+                 facet_grid(~puesto.fit, scales = "free") +
+                 xlab("Sueldo semanal") +
+                 ylab("Probabilidad") + 
+                 ggtitle("Probabilidad vs sueldo por puesto 2013 a 2015")
+     
+       suppressWarnings(ggplotly())
+       
+     #2016
+     top.ten.gral <- generales%>%filter(anio.ingreso >=2016, puesto.fit %in% top.ten.puesto$puesto.fit,
+                                        sueldo>=700, sueldo < 1700)
+     
+     pl5 <- ggplot(data = top.ten.gral, 
+            aes(x = sueldo, y= unmes, colour = sexo)) +
+                 geom_count(alpha = 0.5) + 
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 geom_smooth(method = "loess", span = 1, se = FALSE, lwd=0.5) +
+                 facet_grid(~puesto.fit, scales = "free") +
+                 xlab("Sueldo semanal") +
+                 ylab("Probabilidad") + 
+                 ggtitle("Probabilidad vs sueldo por puesto 2016")
+     
+       suppressWarnings(ggplotly())
+     
+```
+
+##EDAD
+###Probabilidad quedarse por EDAD
+```{r, edad-masculino, echo=FALSE, fig.height=6, fig.width=10}
+     for.fit.edad <- generales%>%
+          filter(anio.ingreso >= 2014, 
+                 sueldo >= 700)
+
+     pl5 <- ggplot(data = for.fit.edad, 
+            aes(x = edad.fit, y= unmes, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 xlab("Edad") +
+                 ylab("Probabilidad") + 
+                 ggtitle("UN MESES")
+     
+     pl4 <- ggplot(data = for.fit.edad, 
+            aes(x = edad.fit, y= tresmeses, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 1) +
+                 xlab("Edad") +
+                 ylab("Probabilidad") + 
+                 ggtitle("TRES MES")
+     
+
+
+     
+     grid.arrange(pl5, pl4, ncol=2)
+     
+```
+
+###Detalles UN MES
+```{r edad-detalles-masc-tresmes,  echo=FALSE, fig.height=6, fig.width=10}
+     
+     pl5b <- ggplot(data = for.fit.edad, 
+            aes(x = edad.fit, y= unmes, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 2) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) +
+                 geom_smooth(method = "loess", span = 0.8, se = FALSE, lwd=0.5) +
+                 xlab("Edad") +
+                 ylab("Probabilidad") + 
+                 ggtitle("Edad vs probabilidad de quedarse UN MESES") + 
+                scale_x_continuous(breaks = seq(16,70,2))
+
+     suppressWarnings(ggplotly())
+```
+
+##REINGRESOS
+###Probabilidad de quedarse un mes cuando reingresan
+```{r prob-reingresos,  echo=FALSE, fig.height=6, fig.width=10}
+     
+     for.fit.reingresos <- generales%>%
+          filter(anio.ingreso >= 2015, 
+                 sueldo >= 700)%>%
+               mutate("reingresos.bool" = ifelse(reingresos>0,1,0))
+
+     pbing <- ggplot(data = for.fit.reingresos, 
+            aes(x = reingresos.bool, y= unmes, colour = factor(anio.ingreso))) +
+                 geom_count(alpha = 0.5) + 
+                 facet_wrap(~sexo, scales = "free", ncol = 2) +
+                 geom_smooth(method = "lm", se = FALSE, lwd=0.5) +
+                 xlab("Reingresos") +
+                 ylab("Probabilidad") + 
+                 ggtitle("Reingresos vs probabilidad de quedarse UN MESES") +
+               scale_x_continuous(breaks = c(0,1), labels = c("Nuevo","Reingresos"))
+
+     suppressWarnings(ggplotly())
+```
+
+##CAMBIOS DE DEPARTAMENTO
+###Probabilidad de quedarse después de cambio (15 días)
+```{r prob-cambios,  echo=FALSE, fig.height=6, fig.width=10}
+     
+     for.fit.dias.cambio <- generales%>%
+          filter(anio.ingreso >= 2014, 
+                 sueldo >= 700, !is.na(salio.por.cambio))
+
+     # !is.na(salio.por.cambio))%>%
+     #      group_by(anio.ingreso, salio.por.cambio)%>%
+     #      summarise("PERSONAS" = n())
+
+     pbing <- ggplot(data = for.fit.dias.cambio, 
+            aes(x = salio.por.cambio)) +
+                 geom_histogram(bins=2, fill = "wheat", col = "navy") + 
+               facet_wrap(~anio.ingreso)+
+                 xlab("Bajas") +
+                 ylab("Meses de antiguedad") + 
+                 ggtitle("Personal que se salio depues de un cambio") +
+               scale_x_continuous(breaks = c(0,1), labels = c("Continuo","Renuncio"))
+
+     suppressWarnings(ggplotly())
+```
+
